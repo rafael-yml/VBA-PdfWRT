@@ -34,7 +34,7 @@ VBA-PdfWRT pairs naturally with VBA-WinOCR to form a complete PDF → PNG → te
 
 ```
 PDF
- └─► VBA-PdfWRT (Windows.Data.Pdf)          →  per-page PNG images
+ └─► VBA-PdfWRT (Windows.Data.Pdf)       →  per-page PNG images
       └─► VBA-WinOCR (Windows.Media.Ocr) →  extracted text
 ```
 
