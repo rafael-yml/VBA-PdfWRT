@@ -86,7 +86,7 @@ Verified on Windows 10 21H2 (build 19044) and Windows 11 23H2 (build 22631).
 | IPdfPage | — | `RenderToStreamWithOptionsAsync` | 7 |
 | IPdfPageRenderOptions | — | `set_DestinationWidth` | 9 |
 
-The factory IID `{433A0B5F-C007-4788-90F2-08143D922599}` was determined at runtime via `IInspectable.GetIids` enumeration rather than from SDK headers, ensuring it reflects the actual runtime value on shipping Windows builds.
+The factory IID `{433A0B5F-C007-4788-90F2-08143D922599}` was determined at runtime via `IInspectable.GetIids` enumeration.
 
 ---
 
