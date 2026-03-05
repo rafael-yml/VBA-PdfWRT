@@ -124,4 +124,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 - [DanysysTeam/VBA-UWPOCR](https://github.com/DanysysTeam/VBA-UWPOCR): architectural foundation and vtable call pattern
 - [rafael-yml/VBA-WinOCR](https://github.com/rafael-yml/VBA-WinOCR): Kernel32-free revision using msvcrt.dll
 
-Copyright © 2026, [rafae-yml](https://rafael-yml.lovable.app/)
+Copyright © 2026, [rafael-yml](https://rafael-yml.lovable.app/)
