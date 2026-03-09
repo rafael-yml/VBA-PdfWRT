@@ -1,30 +1,18 @@
 VERSION 1.0 CLASS
 BEGIN
-  MultiUse = -1
+  MultiUse = -1  'True
 END
 Attribute VB_Name = "PdfWRT"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = False
+Attribute VB_Exposed = False
 Option Explicit
 
-' ============================================================
-'  PdfWRT — Direct WinRT calls to Windows.Data.Pdf
-'  Renders PDF pages to PNG images with no external tools,
-'  no shell execution, no PowerShell, no Kernel32.
-'
-'  Confirmed working on:
-'    Windows 10 21H2 (build 19044)
-'    Windows 11 23H2 (build 22631)
-'
-'  Confirmed vtable offsets:
-'    IPdfDocumentStatics.LoadFromStreamAsync        -> factory offset 8
-'    IPdfDocument.GetPage                           -> offset 6
-'    IPdfDocument.get_PageCount                     -> offset 7
-'    IPdfPage.RenderToStreamAsync                   -> offset 6
-'    IPdfPage.RenderToStreamWithOptionsAsync        -> offset 7
-'    IPdfPageRenderOptions.set_DestinationWidth     -> offset 9
-'
-'  Inspired by UWPOCR by DanysysTeam with modifications
-'  by rafael-yml to avoid Kernel32 and use msvcrt.dll instead.
-' ============================================================
+' Windows.Data.Pdf WinRT - renders PDF pages to PNG, no external tools or Kernel32.
+' vtable offsets: LoadFromStreamAsync=8, GetPage=6, get_PageCount=7,
+'   RenderToStreamAsync=6, RenderToStreamWithOptionsAsync=7, set_DestinationWidth=9
+' Based on UWPOCR by DanysysTeam; modified by rafael-yml to use msvcrt.dll.
 
 Private Type GUID
     Data1 As Long
@@ -34,7 +22,7 @@ Private Type GUID
 End Type
 
 #If VBA7 Then
-    Private Declare PtrSafe Sub MemoryCopy Lib "msvcrt.dll" Alias "memcpy" (ByVal Destination As LongPtr, ByVal Source As LongPtr, ByVal Length As LongPtr)
+    Private Declare PtrSafe Sub MemoryCopy Lib "msvcrt.dll" Alias "memcpy" (ByVal Destination As LongPtr, ByVal source As LongPtr, ByVal Length As LongPtr)
     Private Declare PtrSafe Function DispCallFunc Lib "oleAut32.dll" (ByVal pvInstance As LongPtr, ByVal offsetinVft As LongPtr, ByVal CallConv As Long, ByVal retTYP As Integer, ByVal paCNT As Long, ByRef paTypes As Integer, ByRef paValues As LongPtr, ByRef retVAR As Variant) As Long
     Private Declare PtrSafe Function CLSIDFromString Lib "ole32" (ByVal OleStringCLSID As LongPtr, ByRef cGUID As Any) As Long
     Private Declare PtrSafe Function RoGetActivationFactory Lib "Combase.dll" (ByVal activatableClassId As LongPtr, ByRef riid As GUID, ByRef factory As LongPtr) As Long
@@ -69,10 +57,6 @@ Private Const CC_STDCALL = 4
 Private pIPdfDocumentFactory As LongPtr
 Private IsInitialized As Boolean
 
-' ============================================================
-'  Public API
-' ============================================================
-
 Public Function RenderPDFToImages(ByVal pdfPath As String, _
                                    ByVal outputFolder As String, _
                                    Optional ByVal widthPx As Long = 2480) As Boolean
@@ -81,21 +65,18 @@ Public Function RenderPDFToImages(ByVal pdfPath As String, _
         Err.Raise 1, "PDFWRT.RenderPDFToImages", "Failed to initialize Windows.Data.Pdf WinRT factory"
     End If
 
-    ' Open PDF as IRandomAccessStream (read)
     Dim pStream As LongPtr
     pStream = CreateReadStreamOnFile(pdfPath)
     If pStream = 0 Then
         Err.Raise 2, "PDFWRT.RenderPDFToImages", "Failed to open PDF stream: " & pdfPath
     End If
 
-    ' IPdfDocumentStatics.LoadFromStreamAsync — offset 8
-    Dim pAsync As LongPtr
+    Dim pAsync As LongPtr  ' IPdfDocumentStatics.LoadFromStreamAsync (offset 8)
     Call vtblCall(pIPdfDocumentFactory, 8 * PTR_SIZE, vbLong, CC_STDCALL, pStream, VarPtr(pAsync))
     If pAsync = 0 Then
         Err.Raise 3, "PDFWRT.RenderPDFToImages", "LoadFromStreamAsync returned null"
     End If
 
-    ' Wait for document load
     Dim pGUID As GUID
     Dim pIAsyncInfo As LongPtr
     Call CLSIDFromString(StrPtr("{00000036-0000-0000-C000-000000000046}"), pGUID)
@@ -115,36 +96,30 @@ Public Function RenderPDFToImages(ByVal pdfPath As String, _
         End If
     Loop Until Status <> 0
 
-    ' GetResults — offset 8
-    Dim pDoc As LongPtr
+    Dim pDoc As LongPtr  ' GetResults (offset 8)
     Call vtblCall(pAsync, 8 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(pDoc))
     If pDoc = 0 Then
-        Err.Raise 5, "PDFWRT.RenderPDFToImages", "PdfDocument null after load — file may be corrupt or password protected"
+        Err.Raise 5, "PDFWRT.RenderPDFToImages", "PdfDocument null after load - file may be corrupt or password protected"
     End If
 
-    ' IPdfDocument.get_PageCount — offset 7
-    Dim pageCount As Long
+    Dim pageCount As Long  ' get_PageCount (offset 7)
     Call vtblCall(pDoc, 7 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(pageCount))
 
-    ' Create output folder if needed
     If Dir(outputFolder, vbDirectory) = "" Then MkDir outputFolder
 
-    ' Create render options once, reuse for all pages
     Dim pOpts As LongPtr
     pOpts = CreateRenderOptions(widthPx)
 
     Dim i As Long
     For i = 0 To pageCount - 1
 
-        ' IPdfDocument.GetPage — offset 6
-        Dim pPage As LongPtr
+        Dim pPage As LongPtr  ' GetPage (offset 6)
         Call vtblCall(pDoc, 6 * PTR_SIZE, vbLong, CC_STDCALL, CLng(i), VarPtr(pPage))
         If pPage = 0 Then
             GoTo NextPage
         End If
 
-        ' Build output path and pre-create empty file
-        ' CreateRandomAccessStreamOnFile requires the file to already exist
+        ' CreateRandomAccessStreamOnFile requires the target file to pre-exist.
         Dim outPath As String
         outPath = outputFolder & "\page_" & Format(i + 1, "000") & ".png"
         Dim fNum As Integer
@@ -152,24 +127,21 @@ Public Function RenderPDFToImages(ByVal pdfPath As String, _
         Open outPath For Binary As #fNum
         Close #fNum
 
-        ' Open file as write stream
         Dim pOutStream As LongPtr
         pOutStream = CreateWriteStreamOnFile(outPath)
         If pOutStream = 0 Then
             GoTo NextPage
         End If
 
-        ' Render page to stream
         Dim pAsyncRender As LongPtr
         If pOpts <> 0 Then
-            ' IPdfPage.RenderToStreamWithOptionsAsync — offset 7
+            ' IPdfPage.RenderToStreamWithOptionsAsync - offset 7
             Call vtblCall(pPage, 7 * PTR_SIZE, vbLong, CC_STDCALL, pOutStream, pOpts, VarPtr(pAsyncRender))
         Else
-            ' IPdfPage.RenderToStreamAsync — offset 6 (fallback, lower quality)
+            ' IPdfPage.RenderToStreamAsync - offset 6 (fallback, lower quality)
             Call vtblCall(pPage, 6 * PTR_SIZE, vbLong, CC_STDCALL, pOutStream, VarPtr(pAsyncRender))
         End If
 
-        ' Wait for render to complete
         If pAsyncRender <> 0 Then
             Dim pAsyncInfo2 As LongPtr
             Call vtblCall(pAsyncRender, 0 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(pGUID), VarPtr(pAsyncInfo2))
@@ -193,12 +165,7 @@ NextPage:
     RenderPDFToImages = True
 End Function
 
-' ============================================================
-'  Private helpers
-' ============================================================
-
 Private Sub Initialize()
-    ' IID_IPdfDocumentStatics — confirmed via GetIids enumeration
     pIPdfDocumentFactory = RoGetActivationIFactory( _
         "Windows.Data.Pdf.PdfDocument", _
         "{433A0B5F-C007-4788-90F2-08143D922599}")
@@ -217,8 +184,7 @@ Private Function CreateRenderOptions(ByVal widthPx As Long) As LongPtr
     WindowsDeleteString hClass
 
     If pOpts <> 0 Then
-        ' IPdfPageRenderOptions.set_DestinationWidth — offset 9
-        Call vtblCall(pOpts, 9 * PTR_SIZE, vbLong, CC_STDCALL, CLng(widthPx))
+        Call vtblCall(pOpts, 9 * PTR_SIZE, vbLong, CC_STDCALL, CLng(widthPx))  ' set_DestinationWidth (offset 9)
     End If
 
     CreateRenderOptions = pOpts
@@ -288,7 +254,7 @@ Private Function vtblCall( _
     If hr = 0& Then
         vtblCall = vRtn
     Else
-        Err.Raise Number:=vbObjectError + hr, Source:="PDFWRT.vtblCall", _
+        Err.Raise Number:=vbObjectError + hr, source:="PDFWRT.vtblCall", _
                   Description:="DispCallFunc failed with HRESULT: " & Hex$(hr)
     End If
 End Function
