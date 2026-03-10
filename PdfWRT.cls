@@ -9,11 +9,6 @@ Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 Option Explicit
 
-' Windows.Data.Pdf WinRT - renders PDF pages to PNG, no external tools or low-level DLL calls.
-' vtable offsets: LoadFromStreamAsync=8, GetPage=6, get_PageCount=7,
-'   RenderToStreamAsync=6, RenderToStreamWithOptionsAsync=7, set_DestinationWidth=9
-' Inspired by UWPOCR by DanysysTeam; modified by rafael-yml to use msvcrt.dll.
-
 Private Type GUID
     Data1 As Long
     Data2 As Integer
