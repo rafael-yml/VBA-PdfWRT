@@ -1,75 +1,69 @@
 # PdfWRT
 
-> Render PDF pages to PNG images directly from VBA. No external tools, no shell execution, no admin rights, no installs.
+Render PDF pages to PNG images directly from VBA. No external tools, no shell execution, no admin rights, no installs.
 
-A VBA class that renders PDF pages to high-quality PNG images using direct WinRT vtable calls to `Windows.Data.Pdf`, the same native PDF renderer used by Microsoft Edge. Works entirely within the VBA runtime with no subprocess spawning, making it suitable for locked-down corporate environments where shell execution and external tools are restricted or monitored.
+Uses direct WinRT vtable calls to `Windows.Data.Pdf` the same native PDF renderer used by Microsoft Edge entirely within the VBA runtime.
 
 ---
 
 ## Motivation
 
-The standard approaches for PDF-to-image conversion from VBA all have significant drawbacks in enterprise environments:
+Standard approaches for PDF-to-image conversion from VBA all carry significant drawbacks in enterprise environments:
 
-- **xpdf tools** (`pdftotext.exe`, `pdftopng.exe`) really awesome tools that I have use many many times in the past but require shell execution which is commonly blocked or flagged by SIEM/EDR solutions
-- **WScript.Shell / Shell()** often restricted by Group Policy or application whitelisting, at least it was the case for me
-- **PowerShell via WScript.Shell** PowerShell execution and especially `-EncodedCommand` are high-signal IOCs that trigger alerts in most modern SIEM setups
-- **Word COM object** can open PDFs but produces poor rasterization quality and is extremely slow; IMPOSSIBLE export individual pages as images I tried so many methods, including passing files through PowerPoint
-- **Adobe Acrobat COM** requires full Acrobat (paid), not just Reader
+- **xpdf tools** (`pdftotext.exe`, `pdftopng.exe`) require shell execution, which is commonly blocked or flagged by SIEM/EDR solutions
+- **WScript.Shell / Shell()** often restricted by Group Policy or application whitelisting
+- **PowerShell via WScript.Shell** `-EncodedCommand` is a high-signal IOC in most SIEM setups
+- **Word COM object** poor rasterization quality, extremely slow, cannot export individual pages as images
+- **Adobe Acrobat COM** requires full Acrobat (paid)
 
-The goal was a solution that:
-1. Produces sharp, high-fidelity output
-2. Never spawns a subprocess or touches the shell
-3. Requires nothing beyond what is already installed on any modern Windows machine
-4. Does not trigger Defender, SIEM, or EDR alerts
-
----
-
-## Inspiration
-
-This project is architecturally based on [DanysysTeam/VBA-UWPOCR](https://github.com/DanysysTeam/VBA-UWPOCR), which is a super cool VBA class that performs OCR by making direct WinRT vtable calls to `Windows.Media.Ocr.OcrEngine` via `DispCallFunc`. Studying that codebase revealed that the same pattern could be applied to `Windows.Data.Pdf` to achieve PDF rendering — effectively giving VBA access to the full Windows PDF rendering pipeline without any intermediary process. I was so impressed with it the day I found it.
-
-The same Kernel32-free approach from my own fork of VBA-UWPOCR (Which I call VBA-WinOCR) [My Fork](https://github.com/rafael-yml/VBA-WinOCR) is used here, replacing `RtlMoveMemory` from `Kernel32.dll` with `memcpy` from `msvcrt.dll` to avoid triggering Windows Defender in corporate environments.
-
-VBA-PdfWRT pairs naturally with VBA-WinOCR to form a complete PDF → PNG → text pipeline entirely in native VBA:
-
-```
-PDF
- └─► VBA-PdfWRT (Windows.Data.Pdf)       →  per-page PNG images
-      └─► VBA-WinOCR (Windows.Media.Ocr) →  extracted text
-```
+PdfWRT produces sharp, high-fidelity output, never spawns a subprocess, requires nothing beyond what is installed on any modern Windows machine, and does not trigger Defender, SIEM, or EDR alerts.
 
 ---
 
 ## Usage
 
 ```vb
-Dim pdfRenderer As New PdfWRT
-pdfRenderer.RenderPDFToImages "C:\Docs\report.pdf", "C:\Output\pages", 2480
+Dim pdf As New PdfWRT
+pdf.RenderPDFToImages "C:\Docs\report.pdf", "C:\Output\pages", 2480
 ```
 
 ### Parameters
 
-| Parameter | Type | Description |
-|---|---|---|
-| `pdfPath` | String | Full path to the input PDF file |
-| `outputFolder` | String | Folder where PNG files will be saved (created if it doesn't exist) |
-| `widthPx` | Long | Output width in pixels (optional, default 2480) |
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `pdfPath` | String | | Full path to the input PDF file |
+| `outputFolder` | String | | Folder where PNG files will be saved (created if it doesn't exist) |
+| `widthPx` | Long | 2480 | Output width in pixels |
+
+Output files are named `page_001.png`, `page_002.png`, etc.
 
 ### Resolution guide
 
-| `widthPx` | DPI (A4) | Use case |
+| `widthPx` | Approx DPI (A4) | Notes |
 |---|---|---|
-| 1240 | 150 dpi | Quick preview |
-| 2480 | 300 dpi | Standard quality, OCR |
-| 4960 | 600 dpi | High fidelity archival |
-
-Output files are named `page_001.png`, `page_002.png`, etc.
+| 1240 | ~150 dpi | Quick preview |
+| 2480 | ~300 dpi | Standard quality (default) |
+| 4960 | ~600 dpi | High fidelity archival |
 
 ---
 
 ## How it works
 
-Modern Windows installs ship with `Windows.Data.Pdf`, a WinRT component that exposes a high-quality PDF renderer (the same one used by Microsoft Edge). Normally this API is only accessible from UWP apps or .NET code, but it can be called directly from VBA.
+Modern Windows ships with `Windows.Data.Pdf`, a WinRT component exposing a high-quality PDF renderer. Normally accessible only from UWP or .NET, it can be called directly from VBA via `DispCallFunc` vtable dispatch the same technique used in [DanysysTeam/VBA-UWPOCR](https://github.com/DanysysTeam/VBA-UWPOCR).
+
+---
+
+## PDF → PNG → Text pipeline
+
+PdfWRT pairs naturally with [VBA-WinOCR](https://github.com/rafael-yml/VBA-WinOCR) (fork of [VBA-UWPOCR](https://github.com/DanysysTeam/VBA-UWPOCR)) to form a complete pipeline:
+
+```
+PDF
+ └─► PdfWRT  (Windows.Data.Pdf)       →  per-page PNG images
+      └─► WinOCR (Windows.Media.Ocr)  →  extracted text
+```
+
+Both components operate entirely within VBA with no subprocess spawning, shell access, or external tools.
 
 ---
 
@@ -79,20 +73,18 @@ Verified on Windows 10 21H2 (build 19044) and Windows 11 23H2 (build 22631).
 
 | Interface | IID | Method | Vtable Offset |
 |---|---|---|---|
-| IPdfDocumentStatics | `{433A0B5F-C007-4788-90F2-08143D922599}` | `LoadFromStreamAsync` | 8 |
-| IPdfDocument | — | `GetPage` | 6 |
-| IPdfDocument | — | `get_PageCount` | 7 |
-| IPdfPage | — | `RenderToStreamAsync` | 6 |
-| IPdfPage | — | `RenderToStreamWithOptionsAsync` | 7 |
-| IPdfPageRenderOptions | — | `set_DestinationWidth` | 9 |
-
-The factory IID `{433A0B5F-C007-4788-90F2-08143D922599}` was determined at runtime via `IInspectable.GetIids` enumeration.
+| `IPdfDocumentStatics` | `{433A0B5F-C007-4788-90F2-08143D922599}` | `LoadFromStreamAsync` | 8 |
+| `IPdfDocument` | | `GetPage` | 6 |
+| `IPdfDocument` | | `get_PageCount` | 7 |
+| `IPdfPage` | | `RenderToStreamAsync` | 6 |
+| `IPdfPage` | | `RenderToStreamWithOptionsAsync` | 7 |
+| `IPdfPageRenderOptions` | | `set_DestinationWidth` | 9 |
 
 ---
 
 ## DLL dependencies
 
-All DLLs are present on every modern Windows installation — nothing needs to be installed or registered.
+All present on every modern Windows installation.
 
 | DLL | Usage |
 |---|---|
@@ -100,7 +92,21 @@ All DLLs are present on every modern Windows installation — nothing needs to b
 | `Shcore.dll` | `CreateRandomAccessStreamOnFile` |
 | `oleAut32.dll` | `DispCallFunc` (vtable call dispatcher) |
 | `ole32.dll` | `CLSIDFromString` |
-| `msvcrt.dll` | `memcpy` (used instead of Kernel32 `RtlMoveMemory` to avoid Defender triggers) |
+| `msvcrt.dll` | `memcpy`, `_sleep` (non-blocking async poll) |
+
+---
+
+## Error codes
+
+| Code | Meaning |
+|---|---|
+| 1 | Failed to initialise `Windows.Data.Pdf` WinRT factory |
+| 2 | Input file not found |
+| 3 | Failed to open PDF file stream |
+| 4 | `LoadFromStreamAsync` returned null |
+| 5 | `IAsyncInfo` QI failed on document load |
+| 6 | `PdfDocument` null after load file may be corrupt or password-protected |
+| 9999 | Timeout waiting for async operation |
 
 ---
 
@@ -113,15 +119,15 @@ All DLLs are present on every modern Windows installation — nothing needs to b
 
 ---
 
-## License
+## Credits
 
-MIT License — see [LICENSE](LICENSE) for details.
+- [DanysysTeam/VBA-UWPOCR](https://github.com/DanysysTeam/VBA-UWPOCR) architectural foundation and vtable call pattern
+- [rafael-yml/VBA-WinOCR](https://github.com/rafael-yml/VBA-WinOCR) `msvcrt.dll` revision used here
 
 ---
 
-## Credits
+## License
 
-- [DanysysTeam/VBA-UWPOCR](https://github.com/DanysysTeam/VBA-UWPOCR): architectural foundation and vtable call pattern
-- [rafael-yml/VBA-WinOCR](https://github.com/rafael-yml/VBA-WinOCR): Kernel32-free revision using msvcrt.dll
+MIT License. See [LICENSE](LICENSE) for details.
 
 Copyright © 2026, [rafael-yml](https://rafael-yml.lovable.app/)
