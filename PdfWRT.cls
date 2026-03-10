@@ -9,10 +9,10 @@ Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 Option Explicit
 
-' Windows.Data.Pdf WinRT - renders PDF pages to PNG, no external tools or Kernel32.
+' Windows.Data.Pdf WinRT - renders PDF pages to PNG, no external tools or low-level DLL calls.
 ' vtable offsets: LoadFromStreamAsync=8, GetPage=6, get_PageCount=7,
 '   RenderToStreamAsync=6, RenderToStreamWithOptionsAsync=7, set_DestinationWidth=9
-' Based on UWPOCR by DanysysTeam; modified by rafael-yml to use msvcrt.dll.
+' Inspired by UWPOCR by DanysysTeam; modified by rafael-yml to use msvcrt.dll.
 
 Private Type GUID
     Data1 As Long
@@ -31,6 +31,7 @@ End Type
     Private Declare PtrSafe Function WindowsGetStringRawBuffer Lib "Combase.dll" (ByVal hString As LongPtr, ByRef Length As Long) As LongPtr
     Private Declare PtrSafe Function CreateRandomAccessStreamOnFile Lib "Shcore.dll" (ByVal pFilePath As LongPtr, ByVal Access As Long, ByRef riid As GUID, ByRef ppv As LongPtr) As Long
     Private Declare PtrSafe Function RoActivateInstance Lib "Combase.dll" (ByVal activatableClassId As LongPtr, ByRef instance As LongPtr) As Long
+    Private Declare PtrSafe Sub MsvcrtSleep Lib "msvcrt.dll" Alias "_sleep" (ByVal dwMilliseconds As Long)
 #Else
     Private Enum LongPtr
         [_]
@@ -44,6 +45,7 @@ End Type
     Private Declare Function WindowsGetStringRawBuffer Lib "Combase.dll" (ByVal hString As Long, ByRef Length As Long) As Long
     Private Declare Function CreateRandomAccessStreamOnFile Lib "Shcore.dll" (ByVal pFilePath As Long, ByVal Access As Long, ByRef riid As GUID, ByRef ppv As Long) As Long
     Private Declare Function RoActivateInstance Lib "Combase.dll" (ByVal activatableClassId As Long, ByRef instance As Long) As Long
+    Private Declare Sub MsvcrtSleep Lib "msvcrt.dll" Alias "_sleep" (ByVal dwMilliseconds As Long)
 #End If
 
 #If Win64 Then
@@ -65,16 +67,24 @@ Public Function RenderPDFToImages(ByVal pdfPath As String, _
         Err.Raise 1, "PDFWRT.RenderPDFToImages", "Failed to initialize Windows.Data.Pdf WinRT factory"
     End If
 
+    ' Validate inputs upfront for clearer error messages.
+    If Dir(pdfPath) = "" Then
+        Err.Raise 2, "PDFWRT.RenderPDFToImages", "File not found: " & pdfPath
+    End If
+    If Right$(outputFolder, 1) = "\" Then
+        outputFolder = Left$(outputFolder, Len(outputFolder) - 1)
+    End If
+
     Dim pStream As LongPtr
     pStream = CreateReadStreamOnFile(pdfPath)
     If pStream = 0 Then
-        Err.Raise 2, "PDFWRT.RenderPDFToImages", "Failed to open PDF stream: " & pdfPath
+        Err.Raise 3, "PDFWRT.RenderPDFToImages", "Failed to open PDF stream: " & pdfPath
     End If
 
     Dim pAsync As LongPtr  ' IPdfDocumentStatics.LoadFromStreamAsync (offset 8)
     Call vtblCall(pIPdfDocumentFactory, 8 * PTR_SIZE, vbLong, CC_STDCALL, pStream, VarPtr(pAsync))
     If pAsync = 0 Then
-        Err.Raise 3, "PDFWRT.RenderPDFToImages", "LoadFromStreamAsync returned null"
+        Err.Raise 4, "PDFWRT.RenderPDFToImages", "LoadFromStreamAsync returned null"
     End If
 
     Dim pGUID As GUID
@@ -82,12 +92,13 @@ Public Function RenderPDFToImages(ByVal pdfPath As String, _
     Call CLSIDFromString(StrPtr("{00000036-0000-0000-C000-000000000046}"), pGUID)
     Call vtblCall(pAsync, 0 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(pGUID), VarPtr(pIAsyncInfo))
     If pIAsyncInfo = 0 Then
-        Err.Raise 4, "PDFWRT.RenderPDFToImages", "IAsyncInfo QI failed on document load"
+        Err.Raise 5, "PDFWRT.RenderPDFToImages", "IAsyncInfo QI failed on document load"
     End If
 
     Dim Status As Long
     Dim lRetry As Long
     Do
+        MsvcrtSleep 5  ' 5ms yield; avoids 100% CPU spin (msvcrt.dll _sleep)
         DoEvents
         Call vtblCall(pIAsyncInfo, 7 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(Status))
         lRetry = lRetry + 1
@@ -95,11 +106,13 @@ Public Function RenderPDFToImages(ByVal pdfPath As String, _
             Err.Raise 9999, "PDFWRT.RenderPDFToImages", "Timeout waiting for document load"
         End If
     Loop Until Status <> 0
+    ReleaseComPtr pIAsyncInfo
 
     Dim pDoc As LongPtr  ' GetResults (offset 8)
     Call vtblCall(pAsync, 8 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(pDoc))
+    ReleaseComPtr pAsync
     If pDoc = 0 Then
-        Err.Raise 5, "PDFWRT.RenderPDFToImages", "PdfDocument null after load - file may be corrupt or password protected"
+        Err.Raise 6, "PDFWRT.RenderPDFToImages", "PdfDocument null after load: file may be corrupt or password-protected"
     End If
 
     Dim pageCount As Long  ' get_PageCount (offset 7)
@@ -148,7 +161,9 @@ Public Function RenderPDFToImages(ByVal pdfPath As String, _
             If pAsyncInfo2 <> 0 Then
                 Dim Status2 As Long
                 Dim lRetry2 As Long
+                lRetry2 = 0  ' reset per-page (VBA hoists Dim to function scope)
                 Do
+                    MsvcrtSleep 5  ' 5ms yield; avoids 100% CPU spin (msvcrt.dll _sleep)
                     DoEvents
                     Call vtblCall(pAsyncInfo2, 7 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(Status2))
                     lRetry2 = lRetry2 + 1
@@ -156,12 +171,19 @@ Public Function RenderPDFToImages(ByVal pdfPath As String, _
                         GoTo NextPage
                     End If
                 Loop Until Status2 <> 0
+                ReleaseComPtr pAsyncInfo2
             End If
+            ReleaseComPtr pAsyncRender
         End If
 
 NextPage:
+        ReleaseComPtr pPage
+        ReleaseComPtr pOutStream
     Next i
 
+    ReleaseComPtr pDoc
+    ReleaseComPtr pOpts
+    ReleaseComPtr pStream
     RenderPDFToImages = True
 End Function
 
@@ -210,13 +232,19 @@ Private Function RoGetActivationIFactory(ByVal activatableClassId As String, ByV
         Dim pFactory As LongPtr
         Call CLSIDFromString(StrPtr(sIID), pGUID)
         Call RoGetActivationFactory(hString, pGUID, pFactory)
-        If pFactory Then
-            RoGetActivationIFactory = pFactory
-            Exit Function
-        End If
-        WindowsDeleteString hString
+        WindowsDeleteString hString  ' always release, regardless of pFactory result
+        RoGetActivationIFactory = pFactory
     End If
 End Function
+
+Private Sub ReleaseComPtr(ByRef ptr As LongPtr)
+    ' Releases a WinRT/COM interface pointer and zeroes it.
+    ' Vtable layout: QI=0, AddRef=1, Release=2
+    If ptr <> 0 Then
+        vtblCall ptr, 2 * PTR_SIZE, vbLong, CC_STDCALL
+        ptr = 0
+    End If
+End Sub
 
 Private Function vtblCall( _
         ByVal InterfacePointer As LongPtr, _
