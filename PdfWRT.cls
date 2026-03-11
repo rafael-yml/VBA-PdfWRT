@@ -23,10 +23,8 @@ End Type
     Private Declare PtrSafe Function RoGetActivationFactory Lib "Combase.dll" (ByVal activatableClassId As LongPtr, ByRef riid As GUID, ByRef factory As LongPtr) As Long
     Private Declare PtrSafe Function WindowsCreateString Lib "Combase.dll" (ByVal sourceString As LongPtr, ByVal Length As Long, ByRef hString As LongPtr) As Long
     Private Declare PtrSafe Function WindowsDeleteString Lib "Combase.dll" (ByVal sourceString As LongPtr) As Long
-    Private Declare PtrSafe Function WindowsGetStringRawBuffer Lib "Combase.dll" (ByVal hString As LongPtr, ByRef Length As Long) As LongPtr
     Private Declare PtrSafe Function CreateRandomAccessStreamOnFile Lib "Shcore.dll" (ByVal pFilePath As LongPtr, ByVal Access As Long, ByRef riid As GUID, ByRef ppv As LongPtr) As Long
     Private Declare PtrSafe Function RoActivateInstance Lib "Combase.dll" (ByVal activatableClassId As LongPtr, ByRef instance As LongPtr) As Long
-    Private Declare PtrSafe Sub MsvcrtSleep Lib "msvcrt.dll" Alias "_sleep" (ByVal dwMilliseconds As Long)
 #Else
     Private Enum LongPtr
         [_]
@@ -37,10 +35,8 @@ End Type
     Private Declare Function RoGetActivationFactory Lib "Combase.dll" (ByVal activatableClassId As Long, ByRef riid As GUID, ByRef factory As Long) As Long
     Private Declare Function WindowsCreateString Lib "Combase.dll" (ByVal sourceString As Long, ByVal Length As Long, ByRef hString As Long) As Long
     Private Declare Function WindowsDeleteString Lib "Combase.dll" (ByVal sourceString As LongPtr) As Long
-    Private Declare Function WindowsGetStringRawBuffer Lib "Combase.dll" (ByVal hString As Long, ByRef Length As Long) As Long
     Private Declare Function CreateRandomAccessStreamOnFile Lib "Shcore.dll" (ByVal pFilePath As Long, ByVal Access As Long, ByRef riid As GUID, ByRef ppv As Long) As Long
     Private Declare Function RoActivateInstance Lib "Combase.dll" (ByVal activatableClassId As Long, ByRef instance As Long) As Long
-    Private Declare Sub MsvcrtSleep Lib "msvcrt.dll" Alias "_sleep" (ByVal dwMilliseconds As Long)
 #End If
 
 #If Win64 Then
@@ -62,24 +58,16 @@ Public Function RenderPDFToImages(ByVal pdfPath As String, _
         Err.Raise 1, "PDFWRT.RenderPDFToImages", "Failed to initialize Windows.Data.Pdf WinRT factory"
     End If
 
-    ' Validate inputs upfront for clearer error messages.
-    If Dir(pdfPath) = "" Then
-        Err.Raise 2, "PDFWRT.RenderPDFToImages", "File not found: " & pdfPath
-    End If
-    If Right$(outputFolder, 1) = "\" Then
-        outputFolder = Left$(outputFolder, Len(outputFolder) - 1)
-    End If
-
     Dim pStream As LongPtr
     pStream = CreateReadStreamOnFile(pdfPath)
     If pStream = 0 Then
-        Err.Raise 3, "PDFWRT.RenderPDFToImages", "Failed to open PDF stream: " & pdfPath
+        Err.Raise 2, "PDFWRT.RenderPDFToImages", "Failed to open PDF stream: " & pdfPath
     End If
 
     Dim pAsync As LongPtr  ' IPdfDocumentStatics.LoadFromStreamAsync (offset 8)
     Call vtblCall(pIPdfDocumentFactory, 8 * PTR_SIZE, vbLong, CC_STDCALL, pStream, VarPtr(pAsync))
     If pAsync = 0 Then
-        Err.Raise 4, "PDFWRT.RenderPDFToImages", "LoadFromStreamAsync returned null"
+        Err.Raise 3, "PDFWRT.RenderPDFToImages", "LoadFromStreamAsync returned null"
     End If
 
     Dim pGUID As GUID
@@ -87,13 +75,12 @@ Public Function RenderPDFToImages(ByVal pdfPath As String, _
     Call CLSIDFromString(StrPtr("{00000036-0000-0000-C000-000000000046}"), pGUID)
     Call vtblCall(pAsync, 0 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(pGUID), VarPtr(pIAsyncInfo))
     If pIAsyncInfo = 0 Then
-        Err.Raise 5, "PDFWRT.RenderPDFToImages", "IAsyncInfo QI failed on document load"
+        Err.Raise 4, "PDFWRT.RenderPDFToImages", "IAsyncInfo QI failed on document load"
     End If
 
     Dim Status As Long
     Dim lRetry As Long
     Do
-        MsvcrtSleep 5  ' 5ms yield; avoids 100% CPU spin (msvcrt.dll _sleep)
         DoEvents
         Call vtblCall(pIAsyncInfo, 7 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(Status))
         lRetry = lRetry + 1
@@ -101,13 +88,11 @@ Public Function RenderPDFToImages(ByVal pdfPath As String, _
             Err.Raise 9999, "PDFWRT.RenderPDFToImages", "Timeout waiting for document load"
         End If
     Loop Until Status <> 0
-    ReleaseComPtr pIAsyncInfo
 
     Dim pDoc As LongPtr  ' GetResults (offset 8)
     Call vtblCall(pAsync, 8 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(pDoc))
-    ReleaseComPtr pAsync
     If pDoc = 0 Then
-        Err.Raise 6, "PDFWRT.RenderPDFToImages", "PdfDocument null after load: file may be corrupt or password-protected"
+        Err.Raise 5, "PDFWRT.RenderPDFToImages", "PdfDocument null after load - file may be corrupt or password protected"
     End If
 
     Dim pageCount As Long  ' get_PageCount (offset 7)
@@ -156,9 +141,7 @@ Public Function RenderPDFToImages(ByVal pdfPath As String, _
             If pAsyncInfo2 <> 0 Then
                 Dim Status2 As Long
                 Dim lRetry2 As Long
-                lRetry2 = 0  ' reset per-page (VBA hoists Dim to function scope)
                 Do
-                    MsvcrtSleep 5  ' 5ms yield; avoids 100% CPU spin (msvcrt.dll _sleep)
                     DoEvents
                     Call vtblCall(pAsyncInfo2, 7 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(Status2))
                     lRetry2 = lRetry2 + 1
@@ -166,20 +149,136 @@ Public Function RenderPDFToImages(ByVal pdfPath As String, _
                         GoTo NextPage
                     End If
                 Loop Until Status2 <> 0
-                ReleaseComPtr pAsyncInfo2
             End If
-            ReleaseComPtr pAsyncRender
         End If
 
 NextPage:
-        ReleaseComPtr pPage
-        ReleaseComPtr pOutStream
     Next i
 
-    ReleaseComPtr pDoc
-    ReleaseComPtr pOpts
-    ReleaseComPtr pStream
     RenderPDFToImages = True
+End Function
+
+' ---------------------------------------------------------------------------
+' Render every page of a PDF to PNG entirely in memory and return them as a
+' Collection of Byte arrays, one per page in order.
+' ---------------------------------------------------------------------------
+Public Function RenderPDFToBytes(ByVal pdfPath As String, _
+                                  Optional ByVal widthPx As Long = 2480) As Collection
+    Dim oResult As New Collection
+    Set RenderPDFToBytes = oResult
+
+    If Not IsInitialized Then Initialize
+    If Not IsInitialized Then Exit Function
+
+    Dim pStream As LongPtr
+    pStream = CreateReadStreamOnFile(pdfPath)
+    If pStream = 0 Then Exit Function
+
+    Dim pAsync As LongPtr
+    Call vtblCall(pIPdfDocumentFactory, 8 * PTR_SIZE, vbLong, CC_STDCALL, pStream, VarPtr(pAsync))
+    If pAsync = 0 Then Exit Function
+
+    Dim pGUID As GUID
+    Dim pIAsyncInfo As LongPtr
+    Call CLSIDFromString(StrPtr("{00000036-0000-0000-C000-000000000046}"), pGUID)
+    Call vtblCall(pAsync, 0 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(pGUID), VarPtr(pIAsyncInfo))
+    If pIAsyncInfo = 0 Then Exit Function
+
+    Dim Status As Long
+    Dim lRetry As Long
+    Do
+        DoEvents
+        Call vtblCall(pIAsyncInfo, 7 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(Status))
+        lRetry = lRetry + 1
+        If lRetry > 500000 Then Exit Function
+    Loop Until Status <> 0
+
+    Dim pDoc As LongPtr
+    Call vtblCall(pAsync, 8 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(pDoc))
+    If pDoc = 0 Then Exit Function
+
+    Dim pageCount As Long
+    Call vtblCall(pDoc, 7 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(pageCount))
+
+    Dim pOpts As LongPtr
+    pOpts = CreateRenderOptions(widthPx)
+
+    ' IStream GUID - used to QI InMemoryRandomAccessStream after each render
+    Dim pIStreamGUID As GUID
+    Call CLSIDFromString(StrPtr("{0000000C-0000-0000-C000-000000000046}"), pIStreamGUID)
+
+    ' HSTRING for InMemoryRandomAccessStream activation
+    Dim hMemRasClass As LongPtr
+    Call WindowsCreateString(StrPtr("Windows.Storage.Streams.InMemoryRandomAccessStream"), _
+                              Len("Windows.Storage.Streams.InMemoryRandomAccessStream"), hMemRasClass)
+
+    Dim i As Long
+    For i = 0 To pageCount - 1
+
+        Dim pPage As LongPtr
+        Call vtblCall(pDoc, 6 * PTR_SIZE, vbLong, CC_STDCALL, CLng(i), VarPtr(pPage))
+        If pPage = 0 Then GoTo NextBytesPage
+
+        ' Create a fresh in-memory stream for this page
+        Dim pMemStream As LongPtr
+        Call RoActivateInstance(hMemRasClass, pMemStream)
+        If pMemStream = 0 Then GoTo NextBytesPage
+
+        ' Render page into the in-memory stream - identical call to RenderPDFToImages
+        Dim pAsyncRender As LongPtr
+        If pOpts <> 0 Then
+            Call vtblCall(pPage, 7 * PTR_SIZE, vbLong, CC_STDCALL, pMemStream, pOpts, VarPtr(pAsyncRender))
+        Else
+            Call vtblCall(pPage, 6 * PTR_SIZE, vbLong, CC_STDCALL, pMemStream, VarPtr(pAsyncRender))
+        End If
+
+        If pAsyncRender = 0 Then GoTo NextBytesPage
+
+        Dim pAsyncInfo2 As LongPtr
+        Call vtblCall(pAsyncRender, 0 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(pGUID), VarPtr(pAsyncInfo2))
+        If pAsyncInfo2 <> 0 Then
+            Dim Status2 As Long
+            Dim lRetry2 As Long
+            Do
+                DoEvents
+                Call vtblCall(pAsyncInfo2, 7 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(Status2))
+                lRetry2 = lRetry2 + 1
+                If lRetry2 > 500000 Then GoTo NextBytesPage
+            Loop Until Status2 <> 0
+        End If
+
+        ' QI the in-memory stream for IStream to get classic COM Read/Seek
+        Dim pIStream As LongPtr
+        Call vtblCall(pMemStream, 0 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(pIStreamGUID), VarPtr(pIStream))
+        If pIStream = 0 Then GoTo NextBytesPage
+
+        ' Seek to end (STREAM_SEEK_END=2) with offset 0 to read the stream byte count.
+        ' LARGE_INTEGER offset is passed as Currency (8-byte value, zero = start of stream).
+        ' ULARGE_INTEGER* output is received into an 8-byte Byte buffer; low 4 bytes = size.
+        Dim aSize(0 To 7) As Byte
+        Call vtblCall(pIStream, 5 * PTR_SIZE, vbLong, CC_STDCALL, CCur(0), CLng(2), VarPtr(aSize(0)))
+
+        Dim lPageSize As Long
+        MemoryCopy VarPtr(lPageSize), VarPtr(aSize(0)), 4  ' extract low-dword as Long
+
+        If lPageSize <= 0 Then GoTo NextBytesPage
+
+        ' Seek back to start (STREAM_SEEK_SET=0)
+        Dim aDummy(0 To 7) As Byte
+        Call vtblCall(pIStream, 5 * PTR_SIZE, vbLong, CC_STDCALL, CCur(0), CLng(0), VarPtr(aDummy(0)))
+
+        ' Read all bytes into a VBA Byte array
+        Dim aBytes() As Byte
+        ReDim aBytes(0 To lPageSize - 1)
+        Dim lRead As Long
+        Call vtblCall(pIStream, 3 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(aBytes(0)), lPageSize, VarPtr(lRead))
+
+        If lRead > 0 Then oResult.Add aBytes
+
+NextBytesPage:
+    Next i
+
+    WindowsDeleteString hMemRasClass
 End Function
 
 Private Sub Initialize()
@@ -227,19 +326,13 @@ Private Function RoGetActivationIFactory(ByVal activatableClassId As String, ByV
         Dim pFactory As LongPtr
         Call CLSIDFromString(StrPtr(sIID), pGUID)
         Call RoGetActivationFactory(hString, pGUID, pFactory)
-        WindowsDeleteString hString  ' always release, regardless of pFactory result
-        RoGetActivationIFactory = pFactory
+        If pFactory Then
+            RoGetActivationIFactory = pFactory
+            Exit Function
+        End If
+        WindowsDeleteString hString
     End If
 End Function
-
-Private Sub ReleaseComPtr(ByRef ptr As LongPtr)
-    ' Releases a WinRT/COM interface pointer and zeroes it.
-    ' Vtable layout: QI=0, AddRef=1, Release=2
-    If ptr <> 0 Then
-        vtblCall ptr, 2 * PTR_SIZE, vbLong, CC_STDCALL
-        ptr = 0
-    End If
-End Sub
 
 Private Function vtblCall( _
         ByVal InterfacePointer As LongPtr, _

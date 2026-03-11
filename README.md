@@ -2,7 +2,7 @@
 
 Render PDF pages to PNG images directly from VBA. No external tools, no shell execution, no admin rights, no installs.
 
-Uses direct WinRT vtable calls to `Windows.Data.Pdf` the same native PDF renderer used by Microsoft Edge entirely within the VBA runtime.
+Uses direct WinRT vtable calls to `Windows.Data.Pdf`, the same native PDF renderer used by Microsoft Edge, entirely within the VBA runtime.
 
 ---
 
@@ -22,48 +22,76 @@ PdfWRT produces sharp, high-fidelity output, never spawns a subprocess, requires
 
 ## Usage
 
+### Render to files
+
 ```vb
 Dim pdf As New PdfWRT
 pdf.RenderPDFToImages "C:\Docs\report.pdf", "C:\Output\pages", 2480
 ```
 
-### Parameters
-
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `pdfPath` | String | | Full path to the input PDF file |
-| `outputFolder` | String | | Folder where PNG files will be saved (created if it doesn't exist) |
+| `outputFolder` | String | | Folder where PNG files will be saved (created if it does not exist) |
 | `widthPx` | Long | 2480 | Output width in pixels |
 
 Output files are named `page_001.png`, `page_002.png`, etc.
+
+### Render to memory (zero disk I/O)
+
+```vb
+Dim pdf As New PdfWRT
+Dim oPages As Collection
+Set oPages = pdf.RenderPDFToBytes("C:\Docs\report.pdf")
+```
+
+Returns a `Collection` of `Byte()` arrays, one per page in order. No files are written at any point. Pages are rendered into a `Windows.Storage.Streams.InMemoryRandomAccessStream` and the bytes are extracted via `IStream` entirely in memory. Returns an empty `Collection` on failure, never `Nothing`. Per-page failures are silently skipped so a single bad page does not abort the document.
 
 ### Resolution guide
 
 | `widthPx` | Approx DPI (A4) | Notes |
 |---|---|---|
 | 1240 | ~150 dpi | Quick preview |
-| 2480 | ~300 dpi | Standard quality (default) |
+| 2480 | ~300 dpi | Standard quality, default |
 | 4960 | ~600 dpi | High fidelity archival |
+
+---
+
+## PDF -> PNG -> Text pipeline
+
+PdfWRT pairs naturally with [VBA-WinOCR](https://github.com/rafael-yml/VBA-WinOCR) to form a complete in-memory pipeline. No files are written or managed by the caller:
+
+```vb
+Dim pdf As New PdfWRT
+Dim ocr As New WinOCR
+
+Dim oPages As Collection
+Set oPages = pdf.RenderPDFToBytes("C:\Docs\scan.pdf")
+
+Dim page As Variant
+Dim sText As String
+For Each page In oPages
+    Dim aBytes() As Byte
+    aBytes = page
+    sText = sText & ocr.BytesToText(aBytes) & vbLf
+Next page
+```
+
+```
+PDF
+ └─► PdfWRT  (Windows.Data.Pdf)       ->  per-page Byte() arrays in memory
+      └─► WinOCR (Windows.Media.Ocr)  ->  extracted text
+```
+
+Both components operate entirely within VBA with no subprocess spawning, shell access, or external tools.
 
 ---
 
 ## How it works
 
-Modern Windows ships with `Windows.Data.Pdf`, a WinRT component exposing a high-quality PDF renderer. Normally accessible only from UWP or .NET, it can be called directly from VBA via `DispCallFunc` vtable dispatch the same technique used in [DanysysTeam/VBA-UWPOCR](https://github.com/DanysysTeam/VBA-UWPOCR).
+Modern Windows ships with `Windows.Data.Pdf`, a WinRT component exposing a high-quality PDF renderer. Normally accessible only from UWP or .NET, it can be called directly from VBA via `DispCallFunc` vtable dispatch, the same technique used in [DanysysTeam/VBA-UWPOCR](https://github.com/DanysysTeam/VBA-UWPOCR).
 
----
-
-## PDF → PNG → Text pipeline
-
-PdfWRT pairs naturally with [VBA-WinOCR](https://github.com/rafael-yml/VBA-WinOCR) (fork of [VBA-UWPOCR](https://github.com/DanysysTeam/VBA-UWPOCR)) to form a complete pipeline:
-
-```
-PDF
- └─► PdfWRT  (Windows.Data.Pdf)       →  per-page PNG images
-      └─► WinOCR (Windows.Media.Ocr)  →  extracted text
-```
-
-Both components operate entirely within VBA with no subprocess spawning, shell access, or external tools.
+`RenderPDFToBytes` renders each page into a `Windows.Storage.Streams.InMemoryRandomAccessStream` created via `RoActivateInstance`, then reads the bytes back by querying `IStream` and calling `IStream.Seek` and `IStream.Read`. No files are created at any point.
 
 ---
 
@@ -92,7 +120,7 @@ All present on every modern Windows installation.
 | `Shcore.dll` | `CreateRandomAccessStreamOnFile` |
 | `oleAut32.dll` | `DispCallFunc` (vtable call dispatcher) |
 | `ole32.dll` | `CLSIDFromString` |
-| `msvcrt.dll` | `memcpy`, `_sleep` (non-blocking async poll) |
+| `msvcrt.dll` | `memcpy` |
 
 ---
 
@@ -105,7 +133,7 @@ All present on every modern Windows installation.
 | 3 | Failed to open PDF file stream |
 | 4 | `LoadFromStreamAsync` returned null |
 | 5 | `IAsyncInfo` QI failed on document load |
-| 6 | `PdfDocument` null after load file may be corrupt or password-protected |
+| 6 | `PdfDocument` null after load, file may be corrupt or password-protected |
 | 9999 | Timeout waiting for async operation |
 
 ---
@@ -121,8 +149,8 @@ All present on every modern Windows installation.
 
 ## Credits
 
-- [DanysysTeam/VBA-UWPOCR](https://github.com/DanysysTeam/VBA-UWPOCR) architectural foundation and vtable call pattern
-- [rafael-yml/VBA-WinOCR](https://github.com/rafael-yml/VBA-WinOCR) `msvcrt.dll` revision used here
+- [DanysysTeam/VBA-UWPOCR](https://github.com/DanysysTeam/VBA-UWPOCR): architectural foundation and vtable call pattern
+- [rafael-yml/VBA-WinOCR](https://github.com/rafael-yml/VBA-WinOCR): `msvcrt.dll` approach used here
 
 ---
 
@@ -130,4 +158,4 @@ All present on every modern Windows installation.
 
 MIT License. See [LICENSE](LICENSE) for details.
 
-Copyright © 2026, [rafael-yml](https://rafael-yml.lovable.app/)
+Copyright (c) 2026, [rafael-yml](https://rafael-yml.lovable.app/)
