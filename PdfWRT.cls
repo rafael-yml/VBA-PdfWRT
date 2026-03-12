@@ -112,7 +112,6 @@ Public Function RenderPDFToImages(ByVal pdfPath As String, _
             GoTo NextPage
         End If
 
-        ' CreateRandomAccessStreamOnFile requires the target file to pre-exist.
         Dim outPath As String
         outPath = outputFolder & "\page_" & Format(i + 1, "000") & ".png"
         Dim fNum As Integer
@@ -158,10 +157,6 @@ NextPage:
     RenderPDFToImages = True
 End Function
 
-' ---------------------------------------------------------------------------
-' Render every page of a PDF to PNG entirely in memory and return them as a
-' Collection of Byte arrays, one per page in order.
-' ---------------------------------------------------------------------------
 Public Function RenderPDFToBytes(ByVal pdfPath As String, _
                                   Optional ByVal widthPx As Long = 2480) As Collection
     Dim oResult As New Collection
@@ -203,11 +198,9 @@ Public Function RenderPDFToBytes(ByVal pdfPath As String, _
     Dim pOpts As LongPtr
     pOpts = CreateRenderOptions(widthPx)
 
-    ' IStream GUID - used to QI InMemoryRandomAccessStream after each render
     Dim pIStreamGUID As GUID
     Call CLSIDFromString(StrPtr("{0000000C-0000-0000-C000-000000000046}"), pIStreamGUID)
 
-    ' HSTRING for InMemoryRandomAccessStream activation
     Dim hMemRasClass As LongPtr
     Call WindowsCreateString(StrPtr("Windows.Storage.Streams.InMemoryRandomAccessStream"), _
                               Len("Windows.Storage.Streams.InMemoryRandomAccessStream"), hMemRasClass)
@@ -219,12 +212,10 @@ Public Function RenderPDFToBytes(ByVal pdfPath As String, _
         Call vtblCall(pDoc, 6 * PTR_SIZE, vbLong, CC_STDCALL, CLng(i), VarPtr(pPage))
         If pPage = 0 Then GoTo NextBytesPage
 
-        ' Create a fresh in-memory stream for this page
         Dim pMemStream As LongPtr
         Call RoActivateInstance(hMemRasClass, pMemStream)
         If pMemStream = 0 Then GoTo NextBytesPage
 
-        ' Render page into the in-memory stream - identical call to RenderPDFToImages
         Dim pAsyncRender As LongPtr
         If pOpts <> 0 Then
             Call vtblCall(pPage, 7 * PTR_SIZE, vbLong, CC_STDCALL, pMemStream, pOpts, VarPtr(pAsyncRender))
@@ -247,27 +238,19 @@ Public Function RenderPDFToBytes(ByVal pdfPath As String, _
             Loop Until Status2 <> 0
         End If
 
-        ' QI the in-memory stream for IStream to get classic COM Read/Seek
+        Dim aSz(0 To 7) As Byte
+        Call vtblCall(pMemStream, 6 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(aSz(0)))
+        Dim lPageSize As Long
+        MemoryCopy VarPtr(lPageSize), VarPtr(aSz(0)), 4  ' low DWORD sufficient for < 4 GB
+
+        If lPageSize <= 0 Then GoTo NextBytesPage
+
+        Call vtblCall(pMemStream, 10 * PTR_SIZE, vbLong, CC_STDCALL, CCur(0))
+
         Dim pIStream As LongPtr
         Call vtblCall(pMemStream, 0 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(pIStreamGUID), VarPtr(pIStream))
         If pIStream = 0 Then GoTo NextBytesPage
 
-        ' Seek to end (STREAM_SEEK_END=2) with offset 0 to read the stream byte count.
-        ' LARGE_INTEGER offset is passed as Currency (8-byte value, zero = start of stream).
-        ' ULARGE_INTEGER* output is received into an 8-byte Byte buffer; low 4 bytes = size.
-        Dim aSize(0 To 7) As Byte
-        Call vtblCall(pIStream, 5 * PTR_SIZE, vbLong, CC_STDCALL, CCur(0), CLng(2), VarPtr(aSize(0)))
-
-        Dim lPageSize As Long
-        MemoryCopy VarPtr(lPageSize), VarPtr(aSize(0)), 4  ' extract low-dword as Long
-
-        If lPageSize <= 0 Then GoTo NextBytesPage
-
-        ' Seek back to start (STREAM_SEEK_SET=0)
-        Dim aDummy(0 To 7) As Byte
-        Call vtblCall(pIStream, 5 * PTR_SIZE, vbLong, CC_STDCALL, CCur(0), CLng(0), VarPtr(aDummy(0)))
-
-        ' Read all bytes into a VBA Byte array
         Dim aBytes() As Byte
         ReDim aBytes(0 To lPageSize - 1)
         Dim lRead As Long
