@@ -238,6 +238,7 @@ Public Function RenderPDFToBytes(ByVal pdfPath As String, _
             Loop Until Status2 <> 0
         End If
 
+        'get_Size (IRandomAccessStream vtable offset 6) -> UINT64 byte count.
         Dim aSz(0 To 7) As Byte
         Call vtblCall(pMemStream, 6 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(aSz(0)))
         Dim lPageSize As Long
@@ -245,8 +246,10 @@ Public Function RenderPDFToBytes(ByVal pdfPath As String, _
 
         If lPageSize <= 0 Then GoTo NextBytesPage
 
+        'Seek (IRandomAccessStream vtable offset 10) -> rewind to position 0.
         Call vtblCall(pMemStream, 10 * PTR_SIZE, vbLong, CC_STDCALL, CCur(0))
 
+        'QI for IStream, then Read the PNG bytes.
         Dim pIStream As LongPtr
         Call vtblCall(pMemStream, 0 * PTR_SIZE, vbLong, CC_STDCALL, VarPtr(pIStreamGUID), VarPtr(pIStream))
         If pIStream = 0 Then GoTo NextBytesPage
@@ -309,11 +312,10 @@ Private Function RoGetActivationIFactory(ByVal activatableClassId As String, ByV
         Dim pFactory As LongPtr
         Call CLSIDFromString(StrPtr(sIID), pGUID)
         Call RoGetActivationFactory(hString, pGUID, pFactory)
+        WindowsDeleteString hString
         If pFactory Then
             RoGetActivationIFactory = pFactory
-            Exit Function
         End If
-        WindowsDeleteString hString
     End If
 End Function
 
