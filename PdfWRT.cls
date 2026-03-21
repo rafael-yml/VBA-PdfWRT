@@ -25,6 +25,7 @@ End Type
     Private Declare PtrSafe Function WindowsDeleteString Lib "Combase.dll" (ByVal sourceString As LongPtr) As Long
     Private Declare PtrSafe Function CreateRandomAccessStreamOnFile Lib "Shcore.dll" (ByVal pFilePath As LongPtr, ByVal Access As Long, ByRef riid As GUID, ByRef ppv As LongPtr) As Long
     Private Declare PtrSafe Function RoActivateInstance Lib "Combase.dll" (ByVal activatableClassId As LongPtr, ByRef instance As LongPtr) As Long
+    Private Declare PtrSafe Function CoCreateGuid Lib "ole32" (ByRef pguid As GUID) As Long
 #Else
     Private Enum LongPtr
         [_]
@@ -37,6 +38,7 @@ End Type
     Private Declare Function WindowsDeleteString Lib "Combase.dll" (ByVal sourceString As LongPtr) As Long
     Private Declare Function CreateRandomAccessStreamOnFile Lib "Shcore.dll" (ByVal pFilePath As Long, ByVal Access As Long, ByRef riid As GUID, ByRef ppv As Long) As Long
     Private Declare Function RoActivateInstance Lib "Combase.dll" (ByVal activatableClassId As Long, ByRef instance As Long) As Long
+    Private Declare Function CoCreateGuid Lib "ole32" (ByRef pguid As GUID) As Long
 #End If
 
 #If Win64 Then
@@ -157,7 +159,45 @@ End Function
 
 Public Function RenderPDFToBytes(ByVal pdfPath As String, _
                                   Optional ByVal widthPx As Long = 2480) As Collection
+    Dim oResult As New Collection
+    Set RenderPDFToBytes = oResult
 
+    Dim g As GUID
+    CoCreateGuid g
+    Dim sTmpFolder As String
+    sTmpFolder = Environ("TEMP") & "\pdfwrt_" & Right$("00000000" & Hex$(g.Data1), 8)
+
+    On Error GoTo Cleanup
+    If Not RenderPDFToImages(pdfPath, sTmpFolder, widthPx) Then GoTo Cleanup
+
+    Dim sFile  As String
+    Dim iFile  As Integer
+    Dim lSize  As Long
+    Dim aBytes() As Byte
+    Dim lPage  As Long
+    lPage = 1
+    Do
+        sFile = sTmpFolder & "\page_" & Format(lPage, "000") & ".png"
+        If Len(Dir(sFile)) = 0 Then Exit Do
+        iFile = FreeFile
+        Open sFile For Binary Access Read As #iFile
+        lSize = LOF(iFile)
+        If lSize > 0 Then
+            ReDim aBytes(0 To lSize - 1)
+            Get #iFile, , aBytes
+            oResult.Add aBytes
+        End If
+        Close #iFile
+        iFile = 0
+        Kill sFile
+        lPage = lPage + 1
+    Loop
+
+Cleanup:
+    On Error Resume Next
+    If iFile > 0 Then Close #iFile
+    RmDir sTmpFolder
+    On Error GoTo 0
 End Function
 
 Private Sub Initialize()
@@ -205,11 +245,10 @@ Private Function RoGetActivationIFactory(ByVal activatableClassId As String, ByV
         Dim pFactory As LongPtr
         Call CLSIDFromString(StrPtr(sIID), pGUID)
         Call RoGetActivationFactory(hString, pGUID, pFactory)
+        WindowsDeleteString hString
         If pFactory Then
             RoGetActivationIFactory = pFactory
-            Exit Function
         End If
-        WindowsDeleteString hString
     End If
 End Function
 
