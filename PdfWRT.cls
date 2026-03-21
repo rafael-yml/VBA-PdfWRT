@@ -17,7 +17,6 @@ Private Type GUID
 End Type
 
 #If VBA7 Then
-    Private Declare PtrSafe Sub MemoryCopy Lib "msvcrt.dll" Alias "memcpy" (ByVal Destination As LongPtr, ByVal source As LongPtr, ByVal length As LongPtr)
     Private Declare PtrSafe Function DispCallFunc Lib "oleAut32.dll" (ByVal pvInstance As LongPtr, ByVal offsetinVft As LongPtr, ByVal CallConv As Long, ByVal retTYP As Integer, ByVal paCNT As Long, ByRef paTypes As Integer, ByRef paValues As LongPtr, ByRef retVAR As Variant) As Long
     Private Declare PtrSafe Function CLSIDFromString Lib "ole32" (ByVal OleStringCLSID As LongPtr, ByRef cGUID As Any) As Long
     Private Declare PtrSafe Function RoGetActivationFactory Lib "Combase.dll" (ByVal activatableClassId As LongPtr, ByRef riid As GUID, ByRef factory As LongPtr) As Long
@@ -30,7 +29,6 @@ End Type
     Private Enum LongPtr
         [_]
     End Enum
-    Private Declare Sub MemoryCopy Lib "msvcrt.dll" Alias "memcpy" (ByVal Destination As Long, ByVal Source As Long, ByVal Length As Long)
     Private Declare Function DispCallFunc Lib "oleAut32.dll" (ByVal pvInstance As Long, ByVal offsetinVft As Long, ByVal CallConv As Long, ByVal retTYP As Integer, ByVal paCNT As Long, ByRef paTypes As Integer, ByRef paValues As Long, ByRef retVAR As Variant) As Long
     Private Declare Function CLSIDFromString Lib "ole32" (ByVal OleStringCLSID As Long, ByRef cGUID As Any) As Long
     Private Declare Function RoGetActivationFactory Lib "Combase.dll" (ByVal activatableClassId As Long, ByRef riid As GUID, ByRef factory As Long) As Long
@@ -50,11 +48,29 @@ End Type
 Private Const CC_STDCALL = 4
 
 Private pIPdfDocumentFactory As LongPtr
-Private IsInitialized As Boolean
+Private IsInitialized         As Boolean
+Private m_lDefaultWidth       As Long
+
+' ---------------------------------------------------------------------------
+' DefaultWidth: render width in pixels used when widthPx is not supplied.
+' Default 2480 px (~A4 at 300 dpi). Higher values give better OCR accuracy
+' at the cost of larger PNG files and slower rendering.
+' ---------------------------------------------------------------------------
+Public Property Get DefaultWidth() As Long
+    DefaultWidth = m_lDefaultWidth
+End Property
+Public Property Let DefaultWidth(ByVal lPx As Long)
+    If lPx > 0 Then m_lDefaultWidth = lPx
+End Property
+
+Private Sub Class_Initialize()
+    m_lDefaultWidth = 2480
+End Sub
 
 Public Function RenderPDFToImages(ByVal pdfPath As String, _
                                    ByVal outputFolder As String, _
-                                   Optional ByVal widthPx As Long = 2480) As Boolean
+                                   Optional ByVal widthPx As Long = 0) As Boolean
+    If widthPx <= 0 Then widthPx = m_lDefaultWidth
     If Not IsInitialized Then Initialize
     If Not IsInitialized Then
         Err.Raise 1, "PDFWRT.RenderPDFToImages", "Failed to initialize Windows.Data.Pdf WinRT factory"
@@ -158,7 +174,13 @@ NextPage:
 End Function
 
 Public Function RenderPDFToBytes(ByVal pdfPath As String, _
-                                  Optional ByVal widthPx As Long = 2480) As Collection
+                                  Optional ByVal widthPx As Long = 0) As Collection
+    ' Renders each PDF page to a transient temp file and reads the bytes back.
+    ' Avoids the STA/async-callback crash of the pure InMemoryRandomAccessStream path:
+    ' WinRT render completions cannot marshal back to VBA's STA via DoEvents alone.
+    ' Temp files are always deleted; caller sees only a Collection of Byte arrays.
+    ' Returns an empty Collection on complete failure — never Nothing.
+    If widthPx <= 0 Then widthPx = m_lDefaultWidth
     Dim oResult As New Collection
     Set RenderPDFToBytes = oResult
 
@@ -196,6 +218,7 @@ Public Function RenderPDFToBytes(ByVal pdfPath As String, _
 Cleanup:
     On Error Resume Next
     If iFile > 0 Then Close #iFile
+    ' Remove temp folder if it exists and is now empty
     RmDir sTmpFolder
     On Error GoTo 0
 End Function
