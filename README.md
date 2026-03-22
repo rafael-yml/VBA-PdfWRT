@@ -26,14 +26,14 @@ PdfWRT produces sharp, high-fidelity output, never spawns a subprocess, requires
 
 ```vb
 Dim pdf As New PdfWRT
-pdf.RenderPDFToImages "C:\Docs\report.pdf", "C:\Output\pages", 2480
+pdf.RenderPDFToImages "C:\Docs\report.pdf", "C:\Output\pages"
 ```
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `pdfPath` | String | | Full path to the input PDF file |
 | `outputFolder` | String | | Folder where PNG files will be saved (created if it does not exist) |
-| `widthPx` | Long | 2480 | Output width in pixels |
+| `widthPx` | Long | `DefaultWidth` | Output width in pixels; 0 or omitted uses `DefaultWidth` |
 
 Output files are named `page_001.png`, `page_002.png`, etc.
 
@@ -45,7 +45,7 @@ Dim oPages As Collection
 Set oPages = pdf.RenderPDFToBytes("C:\Docs\report.pdf")
 ```
 
-Returns a `Collection` of `Byte()` arrays, one per page in order. No files are written at any point. Pages are rendered into a `Windows.Storage.Streams.InMemoryRandomAccessStream` and the bytes are extracted via `IStream` entirely in memory. Returns an empty `Collection` on failure, never `Nothing`. Per-page failures are silently skipped so a single bad page does not abort the document.
+Returns a `Collection` of `Byte()` arrays, one per page in order. Renders to a GUID-named temp folder under `%TEMP%`, reads each PNG into a `Byte()` array, and deletes all files before returning. The caller sees no disk activity. Returns an empty `Collection` on failure.
 
 ### Resolution guide
 
@@ -56,6 +56,19 @@ Returns a `Collection` of `Byte()` arrays, one per page in order. No files are w
 | 4960 | ~600 dpi | High fidelity archival |
 
 ---
+
+---
+
+## Properties
+
+#### `DefaultWidth` → `Long` (default `2480`)
+
+Render width in pixels used when `widthPx` is not supplied. Higher values give better OCR accuracy at the cost of larger PNG files and slower rendering.
+
+```vb
+pdf.DefaultWidth = 3508  ' A4 at 300 dpi landscape
+pdf.DefaultWidth = 1240  ' faster preview quality
+```
 
 ## PDF -> PNG -> Text pipeline
 
@@ -91,7 +104,7 @@ Both components operate entirely within VBA with no subprocess spawning, shell a
 
 Modern Windows ships with `Windows.Data.Pdf`, a WinRT component exposing a high-quality PDF renderer. Normally accessible only from UWP or .NET, it can be called directly from VBA via `DispCallFunc` vtable dispatch, the same technique used in [DanysysTeam/VBA-UWPOCR](https://github.com/DanysysTeam/VBA-UWPOCR).
 
-`RenderPDFToBytes` renders each page into a `Windows.Storage.Streams.InMemoryRandomAccessStream` created via `RoActivateInstance`, then reads the bytes back by querying `IStream` and calling `IStream.Seek` and `IStream.Read`. No files are created at any point.
+`RenderPDFToBytes` calls `RenderPDFToImages` internally to a GUID-named temp folder, reads each page PNG back as a `Byte()` array via VBA `Open`/`Get`, deletes the files, and returns the collection. The temp-file bridge avoids a WinRT async callback marshalling issue that caused crashes in the direct in-memory path.
 
 ---
 
@@ -119,8 +132,7 @@ All present on every modern Windows installation.
 | `Combase.dll` | `RoGetActivationFactory`, `RoActivateInstance`, `WindowsCreateString`, `WindowsDeleteString` |
 | `Shcore.dll` | `CreateRandomAccessStreamOnFile` |
 | `oleAut32.dll` | `DispCallFunc` (vtable call dispatcher) |
-| `ole32.dll` | `CLSIDFromString` |
-| `msvcrt.dll` | `memcpy` |
+| `ole32.dll` | `CLSIDFromString`, `CoCreateGuid` |
 
 ---
 
@@ -158,4 +170,4 @@ All present on every modern Windows installation.
 
 MIT License. See [LICENSE](LICENSE) for details.
 
-Copyright (c) 2026, [rafael-yml](https://rafael-yml.lovable.app/)
+Copyright © 2026, [rafael-yml](https://rafael-yml.lovable.app/)
