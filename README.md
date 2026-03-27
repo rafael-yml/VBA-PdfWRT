@@ -1,4 +1,4 @@
-# PdfWRT
+# VBA-PdfWRT
 
 Render PDF pages to PNG images directly from VBA. No external tools, no shell execution, no admin rights, no installs.
 
